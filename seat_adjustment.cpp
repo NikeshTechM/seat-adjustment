@@ -76,7 +76,7 @@ int main() {
     int opt = 1;
     socklen_t addrlen = sizeof(address);
     //Test log
-     fprintf""Starting container-01".\n");
+     fprintf(stdout, "Starting container-01.\n");
 
     // Create server socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
