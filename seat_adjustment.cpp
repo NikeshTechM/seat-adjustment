@@ -103,7 +103,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Waiting for Android connection on port %d...\n", ANDROID_PORT);
+    printf("waiting for Android connection on port %d...\n", ANDROID_PORT);
 
     while (1) {
         // Accept Android connection
