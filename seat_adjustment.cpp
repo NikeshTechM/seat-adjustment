@@ -29,7 +29,7 @@ int connect_to_nxp_socket() {
     inet_pton(AF_INET, NXP_IP, &server_addr.sin_addr);
 
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection to NXP failed");
+        perror("connection to NXP failed");
         close(sock);
         return -1;
     }
