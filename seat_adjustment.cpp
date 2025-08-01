@@ -7,23 +7,25 @@
 #include <sys/socket.h>
 #include <fcntl.h>
 #include <nlohmann/json.hpp>
+#include <thread>
 
 using json = nlohmann::json;
 
 #define BUFFER_SIZE 2048
 #define NXP_PORT 44821
-#define NXP_IP "192.168.1.230"
-#define ANDROID_PORT 60001
+#define NXP_IP "192.168.1.102"
 
-// Create and connect socket to NXP
-int connect_to_nxp_socket() {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
+// Send seat data to NXP
+void send_to_nxp(const char* json_str) {
+    int sock;
+    struct sockaddr_in server_addr;
+
+    sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("Socket creation failed (NXP)");
-        return -1;
+        return;
     }
 
-    struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(NXP_PORT);
     inet_pton(AF_INET, NXP_IP, &server_addr.sin_addr);
@@ -31,42 +33,51 @@ int connect_to_nxp_socket() {
     if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         perror("Connection to NXP failed");
         close(sock);
-        return -1;
+        return;
     }
 
-    return sock;
+    send(sock, json_str, strlen(json_str), 0);
+    close(sock);
+
+    printf("Sent to NXP: %s", json_str);
 }
 
-// Adjust seat and send to Android and NXP
-void adjust_seat(const std::string& name, json current, json target, int android_socket, int nxp_socket) {
-    const char* keys[] = {"Headrest", "Back", "Height", "HPos"};
+// Adjust the seat step by step and send updates to Android and NXP
+void adjust_seat(const std::string& name, json current, json target, int android_socket) {
+    while (current != target) {
+        for (const auto& key : {"Headrest", "Back", "Height", "HPos"}) {
+            if (!current.contains(key) || !target.contains(key)) continue;
 
-    for (const char* key : keys) {
-        if (!current.contains(key) || !target.contains(key)) continue;
+            int current_val = current[key].get<int>();
+            int target_val = target[key].get<int>();
 
-        int current_val = current[key];
-        int target_val = target[key];
+            if (current_val < target_val)
+                current_val += 1;
+            else if (current_val > target_val)
+                current_val -= 1;
 
-        while (current_val != target_val) {
-            current_val += (current_val < target_val) ? 1 : -1;
             current[key] = current_val;
-
-            json msg;
-            msg["Name"] = name;
-            msg["Seat"] = current;
-
-            std::string json_str = msg.dump() + "\n";
-
-            // Send to Android
-            send(android_socket, json_str.c_str(), json_str.size(), 0);
-
-            // Send to NXP
-            send(nxp_socket, json_str.c_str(), json_str.size(), 0);
-
-            printf("Sent: %s", json_str.c_str());
-            sleep(1);  // Delay between steps
         }
+
+        // Construct JSON message
+        json msg;
+        msg["SeatType"] = name;
+        msg["Seat"] = current;
+        msg["TargetSeat"] = target;
+        std::string json_str = msg.dump() + "\n";
+
+        // Send to Android
+        send(android_socket, json_str.c_str(), json_str.size(), 0);
+        printf("Sent to Android: %s", json_str.c_str());
+
+        // Send to NXP in parallel
+        std::thread nxp_thread(send_to_nxp, json_str.c_str());
+        nxp_thread.detach();
+
+        sleep(1);  // Delay between steps
     }
+
+  
 }
 
 int main() {
@@ -76,19 +87,16 @@ int main() {
     int opt = 1;
     socklen_t addrlen = sizeof(address);
 
-    // Create server socket
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
     }
 
-    // Set socket options
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
 
-    // Bind to Android port
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(ANDROID_PORT);
+    address.sin_port = htons(60001);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         perror("Bind failed");
@@ -96,17 +104,15 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // Listen for Android connections
     if (listen(server_fd, 3) < 0) {
         perror("Listen failed");
         close(server_fd);
         exit(EXIT_FAILURE);
     }
 
-    printf("waiting for Android connection on port %d...\n", ANDROID_PORT);
+    printf("Waiting for Android connection on port 60001...\n");
 
     while (1) {
-        // Accept Android connection
         new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen);
         if (new_socket < 0) {
             perror("Accept failed");
@@ -126,7 +132,7 @@ int main() {
         try {
             auto received_json = json::parse(buffer);
 
-            if (!received_json.contains("Name") ||
+            if (!received_json.contains("SeatType") ||
                 !received_json.contains("CurrentSeat") ||
                 !received_json.contains("TargetSeat")) {
                 fprintf(stderr, "Invalid JSON format (missing keys)\n");
@@ -134,31 +140,20 @@ int main() {
                 continue;
             }
 
-            std::string name = received_json["Name"];
+            std::string name = received_json["SeatType"];
             json current = received_json["CurrentSeat"];
             json target = received_json["TargetSeat"];
 
-            // Connect to NXP
-            int nxp_socket = connect_to_nxp_socket();
-            if (nxp_socket < 0) {
-                fprintf(stderr, "Skipping seat adjustment due to NXP connection issue.\n");
-                close(new_socket);
-                continue;
-            }
-
-            // Perform seat adjustment
-            adjust_seat(name, current, target, new_socket, nxp_socket);
-
-            // Close NXP socket after adjustment
-            close(nxp_socket);
+            adjust_seat(name, current, target, new_socket);
 
         } catch (std::exception& e) {
             fprintf(stderr, "JSON Parse Error: %s\n", e.what());
         }
 
-        close(new_socket);  // Close Android socket
+        close(new_socket);
     }
 
     close(server_fd);
     return 0;
 }
+
