@@ -10,7 +10,7 @@
 #include <thread>
 
 using json = nlohmann::json;
-
+bool error_sent = false; 
 #define BUFFER_SIZE 2048
 #define NXP_PORT 44821
 #define NXP_IP "192.168.1.102"
@@ -86,6 +86,7 @@ void adjust_seat(const std::string& name, json current, json target, int android
         // Stop after sending the error message once
         if (send_count == 11) {
             printf("error .\n");
+             error_sent = true; 
             break;
         }
 
@@ -100,6 +101,12 @@ int main() {
     char buffer[BUFFER_SIZE];
     int opt = 1;
     socklen_t addrlen = sizeof(address);
+    
+    if (error_sent) {
+        printf("Error state active. Ignoring new connection.\n");
+        sleep(1);  // Prevent busy loop
+        continue;
+    }
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation failed");
@@ -141,7 +148,7 @@ int main() {
         }
 
         buffer[read_bytes] = '\0';
-        printf("received: %s\n", buffer);
+        printf("Received: %s\n", buffer);
 
         try {
             auto received_json = json::parse(buffer);
