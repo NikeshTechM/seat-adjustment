@@ -44,6 +44,8 @@ void send_to_nxp(const char* json_str) {
 
 // Adjust the seat step by step and send updates to Android and NXP
 void adjust_seat(const std::string& name, json current, json target, int android_socket) {
+    int send_count = 0;
+
     while (current != target) {
         for (const auto& key : {"Headrest", "Back", "Height", "HPos"}) {
             if (!current.contains(key) || !target.contains(key)) continue;
@@ -61,7 +63,12 @@ void adjust_seat(const std::string& name, json current, json target, int android
 
         // Construct JSON message
         json msg;
-        msg["SeatType"] = name;
+        if (send_count == 10) {
+            msg["SeatType"] = "Error";  // Inject error
+        } else {
+            msg["SeatType"] = name;
+        }
+
         msg["Seat"] = current;
         msg["TargetSeat"] = target;
         std::string json_str = msg.dump() + "\n";
@@ -74,11 +81,18 @@ void adjust_seat(const std::string& name, json current, json target, int android
         std::thread nxp_thread(send_to_nxp, json_str.c_str());
         nxp_thread.detach();
 
+        send_count++;
+
+        // Stop after sending the error message once
+        if (send_count == 11) {
+            printf("error .\n");
+            break;
+        }
+
         sleep(1);  // Delay between steps
     }
-
-  
 }
+
 
 int main() {
     int server_fd, new_socket;
