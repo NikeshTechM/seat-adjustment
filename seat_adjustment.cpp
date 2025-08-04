@@ -10,7 +10,7 @@
 #include <thread>
 
 using json = nlohmann::json;
-bool error_sent = false; 
+
 #define BUFFER_SIZE 2048
 #define NXP_PORT 44821
 #define NXP_IP "192.168.1.102"
@@ -44,8 +44,6 @@ void send_to_nxp(const char* json_str) {
 
 // Adjust the seat step by step and send updates to Android and NXP
 void adjust_seat(const std::string& name, json current, json target, int android_socket) {
-    int send_count = 0;
-
     while (current != target) {
         for (const auto& key : {"Headrest", "Back", "Height", "HPos"}) {
             if (!current.contains(key) || !target.contains(key)) continue;
@@ -63,12 +61,7 @@ void adjust_seat(const std::string& name, json current, json target, int android
 
         // Construct JSON message
         json msg;
-        if (send_count == 10) {
-            msg["SeatType"] = "Error";  // Inject error
-        } else {
-            msg["SeatType"] = name;
-        }
-
+        msg["SeatType"] = name;
         msg["Seat"] = current;
         msg["TargetSeat"] = target;
         std::string json_str = msg.dump() + "\n";
@@ -81,19 +74,11 @@ void adjust_seat(const std::string& name, json current, json target, int android
         std::thread nxp_thread(send_to_nxp, json_str.c_str());
         nxp_thread.detach();
 
-        send_count++;
-
-        // Stop after sending the error message once
-        if (send_count == 11) {
-            printf("error .\n");
-             error_sent = true; 
-            break;
-        }
-
         sleep(1);  // Delay between steps
     }
-}
 
+  
+}
 
 int main() {
     int server_fd, new_socket;
@@ -101,11 +86,6 @@ int main() {
     char buffer[BUFFER_SIZE];
     int opt = 1;
     socklen_t addrlen = sizeof(address);
-    
-    if (error_sent) {
-        printf("Error state active. Ignoring new connection.\n");
-        sleep(1);  // Prevent busy loop
-    }
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation failed");
