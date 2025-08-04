@@ -22,7 +22,7 @@ void send_to_nxp(const char* json_str) {
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        perror("socket creation failed (NXP)");
+        perror("Socket creation failed (NXP)");
         return;
     }
 
