@@ -127,7 +127,7 @@ int main() {
         }
 
         buffer[read_bytes] = '\0';
-        printf("received: %s\n", buffer);
+        printf("Received: %s\n", buffer);
 
         try {
             auto received_json = json::parse(buffer);
