@@ -20,7 +20,7 @@ void send_to_nxp(std::string json_str) {
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        perror("Socket creation failed (NXP)");
+        perror("socket creation failed (NXP)");
         return;
     }
 
