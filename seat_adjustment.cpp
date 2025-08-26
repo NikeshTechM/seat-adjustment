@@ -8,11 +8,13 @@
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <vector>
+#include <iostream>
 
 using ordered_json = nlohmann::ordered_json;  // Maintains insertion order
 #define BUFFER_SIZE 2048
 #define NXP_PORT 44821
 #define NXP_IP "192.168.1.102"
+#define ANDROID_PORT 60001
 
 void send_to_nxp(std::string json_str) {
     int sock;
@@ -20,7 +22,7 @@ void send_to_nxp(std::string json_str) {
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        perror("socket creation failed (NXP)");
+        perror("Socket creation failed (NXP)");
         return;
     }
 
@@ -40,6 +42,47 @@ void send_to_nxp(std::string json_str) {
     printf("Sent to NXP: %s\n", json_str.c_str());
 }
 
+
+void kill_process_on_port(int port) {
+    std::ostringstream cmd;
+    cmd << "ss -tulnp | grep :" << port << " | awk '{print $7}'";
+
+    FILE* pipe = popen(cmd.str().c_str(), "r");
+    if (!pipe) return;
+
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), pipe)) {
+        std::string pid_str(buffer);
+
+        // Trim whitespace
+        pid_str.erase(std::remove(pid_str.begin(), pid_str.end(), '\n'), pid_str.end());
+        pid_str.erase(std::remove(pid_str.begin(), pid_str.end(), ' '), pid_str.end());
+        if (pid_str.empty()) continue;
+
+        int pid = 0;
+
+        // Case 1: "users:(("prog",pid=1234,fd=3))"
+        size_t pos = pid_str.find("pid=");
+        if (pos != std::string::npos) {
+            std::string sub = pid_str.substr(pos + 4);
+            sub = sub.substr(0, sub.find(",")); // cut at next comma
+            pid = atoi(sub.c_str());
+        }
+        // Case 2: "1234/prog"
+        else if (isdigit(pid_str[0])) {
+            pid = atoi(pid_str.c_str());
+        }
+
+        if (pid > 0) {
+            std::cout << "⚠ Port " << port << " already in use by PID " << pid << ". Killing...\n";
+            std::string ps_cmd = "ps -p " + std::to_string(pid) + " -o comm=";
+            system(ps_cmd.c_str());
+            std::string kill_cmd = "kill -9 " + std::to_string(pid);
+            system(kill_cmd.c_str());
+        }
+    }
+    pclose(pipe);
+}
 void adjust_seat(const std::string& name, ordered_json current, ordered_json target, int android_socket) {
     const std::vector<std::string> update_order = {"Back", "HPos", "VPos", "Headrest"};
 
@@ -119,7 +162,10 @@ int main() {
     char buffer[BUFFER_SIZE];
     int opt = 1;
     socklen_t addrlen = sizeof(address);
-
+    
+    kill_process_on_port(ANDROID_PORT);
+    kill_process_on_port(NXP_PORT)
+;
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
         perror("Socket creation failed");
         exit(EXIT_FAILURE);
@@ -129,7 +175,7 @@ int main() {
 
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(60001);
+    address.sin_port = htons(ANDROID_PORT);
 
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
         perror("Bind failed");
