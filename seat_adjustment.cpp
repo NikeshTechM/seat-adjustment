@@ -142,8 +142,8 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
                 send_to_nxp(json_str);
             }).detach();
 
-           // usleep(50 * 1000);  // 50ms pacing for Android
-            sleep(1);
+           usleep(50 * 1000);  // 50ms pacing for Android
+           //sleep(1);
         }
     }
 
