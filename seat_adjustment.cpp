@@ -39,7 +39,7 @@ void send_to_nxp(std::string json_str) {
     send(sock, json_str.c_str(), json_str.size(), 0);
     close(sock);
 
-    printf("Sent to NXP: %s\n", json_str.c_str());
+    printf("Sent to 'test1' NXP: %s\n", json_str.c_str());
 }
 
 
