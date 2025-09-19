@@ -113,7 +113,7 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
     // ------------------ PROGRESS ------------------
     for (const std::string& key : update_order) {
         if (!current.contains(key) || !target.contains(key)) continue;
-        //if (key == "Headrest-1.4") continue;  // Skip headrest updates for now
+        // if (key == "Headrest-1.4") continue;  // Skip headrest updates for now
 
         int current_val = current[key].get<int>();
         int target_val = target[key].get<int>();
