@@ -39,7 +39,7 @@ void send_to_nxp(std::string json_str) {
     send(sock, json_str.c_str(), json_str.size(), 0);
     close(sock);
 
-    printf("Sent to 'test1' NXP: %s\n", json_str.c_str());
+    printf("Sent to NXP: %s\n", json_str.c_str());
 }
 
 
@@ -113,7 +113,7 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
     // ------------------ PROGRESS ------------------
     for (const std::string& key : update_order) {
         if (!current.contains(key) || !target.contains(key)) continue;
-        if (key == "Headrest") continue;  // Skip headrest updates for now
+        //if (key == "Headrest") continue;  // Skip headrest updates for now
 
         int current_val = current[key].get<int>();
         int target_val = target[key].get<int>();
