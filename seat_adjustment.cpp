@@ -10,7 +10,7 @@
 #include <vector>
 #include <iostream>
 
-using ordered_json = nlohmann::ordered_json;  // Maintains insertion order-1.1
+using ordered_json = nlohmann::ordered_json;  // Maintains insertion order
 #define BUFFER_SIZE 2048
 #define NXP_PORT 44821
 #define NXP_IP "192.168.1.102"
@@ -22,7 +22,7 @@ void send_to_nxp(std::string json_str) {
 
     sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
-        perror("socket creation failed (NXP)");
+        perror("Socket creation failed (NXP)");
         return;
     }
 
@@ -113,7 +113,7 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
     // ------------------ PROGRESS ------------------
     for (const std::string& key : update_order) {
         if (!current.contains(key) || !target.contains(key)) continue;
-        if (key == "Headrest") continue;  
+        if (key == "Headrest") continue;  // Skip headrest updates for now
 
         int current_val = current[key].get<int>();
         int target_val = target[key].get<int>();
@@ -142,8 +142,7 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
                 send_to_nxp(json_str);
             }).detach();
 
-           usleep(50 * 1000);  // 50ms pacing for Android
-           //sleep(1);
+            usleep(50 * 1000);  // 50ms pacing for Android
         }
     }
 
