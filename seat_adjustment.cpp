@@ -110,41 +110,43 @@ void adjust_seat(const std::string& name, ordered_json current, ordered_json tar
         send_to_nxp(start_str);
     }).detach();
 
-    // ------------------ PROGRESS ------------------
-    for (const std::string& key : update_order) {
-        if (!current.contains(key) || !target.contains(key)) continue;
-        if (key == "Headrest") continue;  // Skip headrest updates for now
+  // ------------------ PROGRESS ------------------
+for (const std::string& key : update_order) {
+    if (!current.contains(key) || !target.contains(key)) continue;
+  //  if (key == "Headrest") continue;  // Skip headrest updates for now
 
-        int current_val = current[key].get<int>();
-        int target_val = target[key].get<int>();
-        int step = (key == "Back") ? 5 : 1;
+    int current_val = current[key].get<int>();
+    int target_val = target[key].get<int>();
+    
+    int step = 1; // Always increment/decrement by 1 now
 
-        while (current_val != target_val) {
-            if (current_val < target_val) {
-                current_val += step;
-                if (current_val > target_val) current_val = target_val;
-            } else {
-                current_val -= step;
-                if (current_val < target_val) current_val = target_val;
-            }
-            current[key] = current_val;
-
-            ordered_json progress_msg = build_payload("InProgress", current, target);
-            std::string json_str = progress_msg.dump() + "\n";
-
-            // Send immediately to Android
-            send(android_socket, json_str.c_str(), json_str.size(), 0);
-            printf("Sent to Android: %s", json_str.c_str());
-
-            // Send to NXP with delay
-            std::thread([=]() {
-                sleep(1);  // 1s behind Android
-                send_to_nxp(json_str);
-            }).detach();
-
-            usleep(50 * 1000);  // 50ms pacing for Android
+    while (current_val != target_val) {
+        if (current_val < target_val) {
+            current_val += step;
+            if (current_val > target_val) current_val = target_val;
+        } else {
+            current_val -= step;
+            if (current_val < target_val) current_val = target_val;
         }
+        current[key] = current_val;
+
+        ordered_json progress_msg = build_payload("InProgress", current, target);
+        std::string json_str = progress_msg.dump() + "\n";
+
+        // Send immediately to Android
+        send(android_socket, json_str.c_str(), json_str.size(), 0);
+        printf("Sent to Android: %s", json_str.c_str());
+
+        // Send to NXP with delay
+        std::thread([=]() {
+            sleep(1);  // 1s behind Android
+            send_to_nxp(json_str);
+        }).detach();
+
+        usleep(50 * 1000);  // 50ms pacing for Android
     }
+}
+
 
     // ------------------ END ------------------
     std::string end_str = build_payload("End", current, target).dump() + "\n";
