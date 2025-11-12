@@ -6,6 +6,7 @@ import time
 import select
 import re
 from datetime import datetime
+import shutil
 
 # ----------------------------
 # CLI Argument Parsing
@@ -14,7 +15,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--app-name', help="Container image name, e.g. quay.io/nikesh_sar/logcollector:latest", required=True)
 parser.add_argument('--dataset', help="Path to dataset directory", default=None)
 parser.add_argument('--base', help="Path to base testbed directory", default=None)
-parser.add_argument('--duration', type=int, help="Log streaming duration in seconds", default=20)
+parser.add_argument('--duration', type=int, help="Log streaming duration in seconds", default=30)
 parser.add_argument('--log-file', help="Path to save container logs", default=None)
 parser.add_argument('--testscript', help="Test script directory", default=None)
 args = parser.parse_args()
@@ -31,13 +32,7 @@ container_name = None
 # ----------------------------
 # Logging Configuration
 # ----------------------------
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] %(levelname)s: %(message)s'
-)
-
-# ---- Logging Setup ----
-LOG_DIR =  os.path.join(base_dir, "logs")
+LOG_DIR = os.path.join(base_dir, "logs") if base_dir else "/tmp/logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -49,7 +44,7 @@ log_file_path = os.path.join(LOG_DIR, log_file_name)
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 master_log_path = os.path.join(LOG_DIR, f"master_{timestamp}.log")
 
-
+# Initializing logging configuration for both file and console output
 logging.basicConfig(
     level=logging.DEBUG,
     format='[%(asctime)s] [%(levelname)s] %(message)s',
@@ -59,6 +54,7 @@ logging.basicConfig(
     ]
 )
 
+# ---- Logging Setup ----
 def log_detection(message):
     timestamp = datetime.now().isoformat()
     log_line = f"[{timestamp}] [INFO] {message}"
@@ -76,6 +72,7 @@ def test_logging(message):
 # ----------------------------
 # Functions
 # ----------------------------
+
 def run_container(app_name):
     """Run the podman container"""
     global container_name
@@ -111,7 +108,7 @@ def run_container(app_name):
         return False  # failure
 
 
-def print_container_output(container_name, duration=20):
+def print_container_output(container_name, duration=30):
     start_time = time.time()
     command = ["sudo", "podman", "logs", "-f", container_name]
     logging.info(f"Streaming logs for {duration} seconds...")
@@ -139,7 +136,7 @@ def print_container_output(container_name, duration=20):
     logging.info(f"Logs saved to: {log_file_path}")
     log_detection(f"Logs saved to: {log_file_path}")
 
-# verify the output of the container from the log file
+
 def verify_output(log_file_path): 
     """Verify the output of the container from the log file"""
     if not os.path.exists(log_file_path):
@@ -157,15 +154,14 @@ def verify_output(log_file_path):
             return True
         else:
             logging.error("Test did not complete successfully. Check logs for details.")
-            log_detection("Testing failed for {container_name}.")
-            test_logging("Testing failed for {container_name}.")
+            log_detection(f"Testing failed for {container_name}.")
+            test_logging(f"Testing failed for {container_name}.")
             return False
-
 
 
 def stop_container(container_name):
     """Stop the podman container"""
-    command = ["sudo", "podman", "stop", container_name]
+    command = ["sudo", "podman", "kill", container_name]
     logging.info(f"Stopping container '{container_name}'...")
     log_detection(f"Stopping container '{container_name}'...")
     try:
@@ -175,6 +171,9 @@ def stop_container(container_name):
     except subprocess.CalledProcessError as e:  
         logging.error(f"Failed to stop container '{container_name}': {e}")
         log_detection(f"Failed to stop container '{container_name}': {e}")
+    except Exception as e:
+        logging.error(f"Unexpected error while stopping container: {e}")
+        log_detection(f"Unexpected error while stopping container: {e}")
 
 
 # ----------------------------
@@ -187,17 +186,17 @@ def main():
     if base_dir:
         logging.info(f"Using base directory: {base_dir}")
 
+    passed = False
     try:
         passed = run_container(app_name)
         if not passed:
             logging.error("Failed to start the container. Exiting.")
-            return 
+            return
         print_container_output(container_name, duration)
         passed = verify_output(log_file_path)
     finally:
         if container_name:
             stop_container(container_name)
-            logging.info(f"Container '{container_name}' has been stopped.")
         if passed:
             logging.info("Test completed successfully.")
             log_detection("Test completed successfully.")
