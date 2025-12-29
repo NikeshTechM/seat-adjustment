@@ -15,13 +15,13 @@ phases:
       - echo Generating timestamp tag...
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M")
       - IMAGE_TAG="github-${BUILD_TIMESTAMP}"
-      - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
-      - echo "Image will be tagged as: ${FULL_IMAGE_URI}"
+      - 'FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"'
+      - 'echo "Image will be tagged as: ${FULL_IMAGE_URI}"'
 
   build:
     commands:
       - echo Building Podman container image for linux/arm64 using Dockerfile...
-      - podman build --platform linux/arm64 --arch arm64 --label "org.label-schema.build-date=${BUILD_TIMESTAMP}" --label "com.github.build-date=${BUILD_TIMESTAMP}" --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -t ${FULL_IMAGE_URI} -f Dockerfile .
+      - 'podman build --platform linux/arm64 --arch arm64 --label "org.label-schema.build-date=${BUILD_TIMESTAMP}" --label "com.github.build-date=${BUILD_TIMESTAMP}" --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -t ${FULL_IMAGE_URI} -f Dockerfile .'
 
   post_build:
     commands:
@@ -29,8 +29,8 @@ phases:
       - podman push ${FULL_IMAGE_URI}
 
       - echo "Build and push completed successfully!"
-      - echo "Image available at: ${FULL_IMAGE_URI}"
-      - echo "Label applied: com.github.build-date=${BUILD_TIMESTAMP}"
+      - 'echo "Image available at: ${FULL_IMAGE_URI}"'
+      - 'echo "Label applied: com.github.build-date=${BUILD_TIMESTAMP}"'
 
 artifacts:
   files:
