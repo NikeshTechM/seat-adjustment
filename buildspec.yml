@@ -8,6 +8,7 @@ env:
 phases:
   pre_build:
     commands:
+      - export PODMAN_IGNORE_CGROUPSV1_WARNING=1
       - echo Logging in to Amazon ECR...
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
