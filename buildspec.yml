@@ -4,8 +4,9 @@ env:
   variables:
     IMAGE_REPO_NAME: "sdv-devops-engine/seat-adjustment"
     AWS_DEFAULT_REGION: "us-east-1"
-    PODMAN_IGNORE_CGROUPSV1_WARNING: "1"
-    STORAGE_DRIVER: "vfs"
+  secrets-manager:
+    DOCKERHUB_USERNAME: dockerhub-credentials:username
+    DOCKERHUB_PASSWORD: dockerhub-credentials:password
 
 phases:
   install:
@@ -23,31 +24,17 @@ phases:
           echo "AWS CLI already installed"
         fi
       - aws --version
-      - echo Installing and configuring Podman...
-      - yum install -y podman || echo "Podman already installed"
-      - podman --version
-      - mkdir -p /root/.config/containers
-      - |
-        cat > /root/.config/containers/storage.conf << 'EOF'
-        [storage]
-        driver = "vfs"
-        runroot = "/var/run/containers/storage"
-        graphroot = "/var/lib/containers/storage"
-        [storage.options]
-        mount_program = "/usr/bin/fuse-overlayfs"
-        EOF
-      - echo "Podman storage configured with vfs driver"
+      - echo Checking Podman installation...
+      - podman --version || yum install -y podman
       
   pre_build:
     commands:
+      - echo Logging in to Docker Hub...
+      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
       - echo Logging in to Amazon ECR...
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - echo "Configuring Podman authentication for ECR..."
-      - mkdir -p ${XDG_RUNTIME_DIR}/containers
-      - ECR_TOKEN=$(aws ecr get-login-password --region $AWS_DEFAULT_REGION)
-      - echo "{\"auths\":{\"${ECR_REGISTRY}\":{\"auth\":\"$(echo -n AWS:${ECR_TOKEN} | base64 -w0)\"}}}" > ${XDG_RUNTIME_DIR}/containers/auth.json
-      - echo "Authentication configured"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin $ECR_REGISTRY
       - echo Generating timestamp tag...
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M")
       - IMAGE_TAG="github-${BUILD_TIMESTAMP}"
@@ -56,8 +43,8 @@ phases:
 
   build:
     commands:
-      - echo Building Podman container image for linux/arm64 using Dockerfile...
-      - 'podman build --platform linux/arm64 --label "org.label-schema.build-date=${BUILD_TIMESTAMP}" --label "com.github.build-date=${BUILD_TIMESTAMP}" --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -t ${FULL_IMAGE_URI} -f Dockerfile .'
+      - echo Building Podman container image...
+      - 'podman build --label "org.label-schema.build-date=${BUILD_TIMESTAMP}" --label "com.github.build-date=${BUILD_TIMESTAMP}" --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -t ${FULL_IMAGE_URI} -f Dockerfile .'
 
   post_build:
     commands:
