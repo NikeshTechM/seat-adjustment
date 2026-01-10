@@ -36,7 +36,7 @@ phases:
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin $ECR_REGISTRY
       - echo Generating timestamp tag...
-      - BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M")
+      - BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
       - IMAGE_TAG="github-${BUILD_TIMESTAMP}"
       - 'FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"'
       - 'echo "Image will be tagged as: ${FULL_IMAGE_URI}"'
