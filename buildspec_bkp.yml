@@ -1,0 +1,62 @@
+version: 0.2
+
+env:
+  variables:
+    IMAGE_REPO_NAME: "sdv-devops-engine/seat-adjustment"
+    AWS_DEFAULT_REGION: "us-east-1"
+  secrets-manager:
+    DOCKERHUB_USERNAME: dockerhub-credentials:username
+    DOCKERHUB_PASSWORD: dockerhub-credentials:password
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo Checking AWS CLI installation...
+      - |
+        if ! command -v aws &> /dev/null || ! aws --version &> /dev/null; then
+          echo "AWS CLI not found or broken. Installing..."
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+          unzip -q awscliv2.zip
+          ./aws/install --update
+        else
+          echo "AWS CLI already installed"
+        fi
+      - aws --version
+      - echo Checking Podman installation...
+      - podman --version || yum install -y podman
+      
+  pre_build:
+    commands:
+      - echo Logging in to Docker Hub...
+      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
+      - echo Logging in to Amazon ECR...
+      - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+      - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin $ECR_REGISTRY
+      - echo Generating timestamp tag...
+      - BUILD_TIMESTAMP=$(date -u +"%Y%m%d-%H%M%S")
+      - IMAGE_TAG="github-${BUILD_TIMESTAMP}"
+      - 'FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"'
+      - 'echo "Image will be tagged as: ${FULL_IMAGE_URI}"'
+
+  build:
+    commands:
+      - echo Building Podman container image...
+      - 'podman build --label "org.label-schema.build-date=${BUILD_TIMESTAMP}" --label "com.github.build-date=${BUILD_TIMESTAMP}" --label "org.opencontainers.image.created=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" -t ${FULL_IMAGE_URI} -f Dockerfile .'
+
+  post_build:
+    commands:
+      - echo Pushing image to ECR...
+      - podman push ${FULL_IMAGE_URI}
+
+      - echo "Build and push completed successfully!"
+      - 'echo "Image available at: ${FULL_IMAGE_URI}"'
+      - 'echo "Label applied: com.github.build-date=${BUILD_TIMESTAMP}"'
+
+artifacts:
+  files:
+    - Dockerfile
+  name: build-artifacts-${CODEBUILD_BUILD_ID}
+  discard-paths: yes
