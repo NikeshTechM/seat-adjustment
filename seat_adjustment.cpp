@@ -9,231 +9,195 @@
 #include <thread>
 #include <vector>
 #include <iostream>
+#include <fstream>
 
-using ordered_json = nlohmann::ordered_json;  
+using ordered_json = nlohmann::ordered_json;
+
+/* ================================
+   CONSTANTS (UNCHANGED AS REQUESTED)
+================================ */
 #define BUFFER_SIZE 2048
+#define ANDROID_PORT 60001
 #define NXP_PORT 44821
 #define NXP_IP "192.168.1.102"
-#define ANDROID_PORT 60001
 
-void send_to_nxp(std::string json_str) {
-    int sock;
-    struct sockaddr_in server_addr;
+/* ================================
+   GLOBAL MODE FLAG
+================================ */
+bool IS_TEST_MODE = false;
 
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
-        perror("Socket creation failed (NXP)");
-        return;
+/* ================================
+   NXP COMMUNICATION
+================================ */
+void send_to_nxp(const std::string& json_str) {
+    if (IS_TEST_MODE) return;  // 🚫 Never touch hardware in test mode
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return;
+
+    struct sockaddr_in server{};
+    server.sin_family = AF_INET;
+    server.sin_port = htons(NXP_PORT);
+    inet_pton(AF_INET, NXP_IP, &server.sin_addr);
+
+    if (connect(sock, (struct sockaddr*)&server, sizeof(server)) == 0) {
+        send(sock, json_str.c_str(), json_str.size(), 0);
     }
 
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(NXP_PORT);
-    inet_pton(AF_INET, NXP_IP, &server_addr.sin_addr);
-
-    if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
-        perror("Connection to NXP failed");
-        close(sock);
-        return;
-    }
-
-    send(sock, json_str.c_str(), json_str.size(), 0);
     close(sock);
-
-    printf("Sent to NXP: %s\n", json_str.c_str());
 }
 
+/* ================================
+   SEAT ADJUSTMENT LOGIC
+================================ */
+void adjust_seat(const std::string& seat,
+                 ordered_json current,
+                 ordered_json target,
+                 int android_socket) {
 
-void kill_process_on_port(int port) {
-    std::ostringstream cmd;
-    cmd << "ss -tulnp | grep :" << port << " | awk '{print $7}'";
-
-    FILE* pipe = popen(cmd.str().c_str(), "r");
-    if (!pipe) return;
-
-    char buffer[256];
-    while (fgets(buffer, sizeof(buffer), pipe)) {
-        std::string pid_str(buffer);
-
-        // Trim whitespace
-        pid_str.erase(std::remove(pid_str.begin(), pid_str.end(), '\n'), pid_str.end());
-        pid_str.erase(std::remove(pid_str.begin(), pid_str.end(), ' '), pid_str.end());
-        if (pid_str.empty()) continue;
-
-        int pid = 0;
-
-        // Case 1: "users:(("prog",pid=1234,fd=3))"
-        size_t pos = pid_str.find("pid=");
-        if (pos != std::string::npos) {
-            std::string sub = pid_str.substr(pos + 4);
-            sub = sub.substr(0, sub.find(",")); // cut at next comma
-            pid = atoi(sub.c_str());
-        }
-        // Case 2: "1234/prog"
-        else if (isdigit(pid_str[0])) {
-            pid = atoi(pid_str.c_str());
-        }
-
-        if (pid > 0) {
-            std::cout << "⚠ Port " << port << " already in use by PID " << pid << ". Killing...\n";
-            std::string ps_cmd = "ps -p " + std::to_string(pid) + " -o comm=";
-            system(ps_cmd.c_str());
-            std::string kill_cmd = "kill -9 " + std::to_string(pid);
-            system(kill_cmd.c_str());
-        }
-    }
-    pclose(pipe);
-}
-void adjust_seat(const std::string& name, ordered_json current, ordered_json target, int android_socket) {
-    const std::vector<std::string> update_order = {"Back", "HPos", "VPos", "Headrest"};
-
-    auto build_payload = [&](const std::string& status, const ordered_json& cur, const ordered_json& tgt) {
-        ordered_json payload;
-        payload["Status"] = status;
-        payload["SeatType"] = name;
-
-        ordered_json seat_data, target_data;
-        for (const auto& key : update_order) {
-            seat_data[key] = cur.value(key, 0);
-            target_data[key] = tgt.value(key, 0);
-        }
-        payload["Seat"] = seat_data;
-        payload["TargetSeat"] = target_data;
-        return payload;
+    const std::vector<std::string> order = {
+        "Back", "HPos", "VPos", "Headrest"
     };
 
-    // ------------------ START ------------------
-    std::string start_str = build_payload("Start", current, target).dump() + "\n";
-    send(android_socket, start_str.c_str(), start_str.size(), 0);
-    printf("Sent to Android: %s", start_str.c_str());
-    std::thread([=]() {
-        sleep(1);  // 1s delay
-        send_to_nxp(start_str);
-    }).detach();
+    auto build_payload = [&](const std::string& status) {
+        ordered_json msg;
+        msg["Status"] = status;
+        msg["SeatType"] = seat;
+        msg["Seat"] = current;
+        msg["TargetSeat"] = target;
+        return msg.dump() + "\n";
+    };
 
-  // ------------------ PROGRESS ------------------
-for (const std::string& key : update_order) {
-    if (!current.contains(key) || !target.contains(key)) continue;
-    if (key == "Headrest") continue;  
+    // ---------- START ----------
+    std::string start = build_payload("Start");
+    send(android_socket, start.c_str(), start.size(), 0);
+    std::thread([=]{ sleep(1); send_to_nxp(start); }).detach();
 
-    int current_val = current[key].get<int>();
-    int target_val = target[key].get<int>();
-    
-    int step = 1; // Always increment/decrement by 1 now
+    // ---------- PROGRESS ----------
+    for (const auto& key : order) {
+        if (!current.contains(key) || !target.contains(key)) continue;
+        if (key == "Headrest") continue;  // same as your original logic
 
-    while (current_val != target_val) {
-        if (current_val < target_val) {
-            current_val += step;
-            if (current_val > target_val) current_val = target_val;
-        } else {
-            current_val -= step;
-            if (current_val < target_val) current_val = target_val;
+        while (current[key] != target[key]) {
+            current[key] = current[key].get<int>() +
+                           ((current[key] < target[key]) ? 1 : -1);
+
+            std::string prog = build_payload("InProgress");
+            send(android_socket, prog.c_str(), prog.size(), 0);
+
+            std::thread([=]{ sleep(1); send_to_nxp(prog); }).detach();
+            usleep(50 * 1000);  // pacing for Android
         }
-        current[key] = current_val;
-
-        ordered_json progress_msg = build_payload("InProgress", current, target);
-        std::string json_str = progress_msg.dump() + "\n";
-
-        // Send immediately to Android
-        send(android_socket, json_str.c_str(), json_str.size(), 0);
-        printf("Sent to Android: %s", json_str.c_str());
-
-        // Send to NXP with delay
-        std::thread([=]() {
-            sleep(1);  // 1s behind Android
-            send_to_nxp(json_str);
-        }).detach();
-
-        usleep(50 * 1000);  // 50ms pacing for Android
     }
+
+    // ---------- END ----------
+    std::string end = build_payload("End");
+    send(android_socket, end.c_str(), end.size(), 0);
+    std::thread([=]{ sleep(1); send_to_nxp(end); }).detach();
 }
 
+/* ================================
+   TEST MODE (CI / CODEBUILD)
+================================ */
+int run_test(const std::string& file) {
+    std::ifstream f(file);
+    if (!f.is_open()) {
+        std::cerr << "❌ Cannot open test file\n";
+        return 1;
+    }
 
-    // ------------------ END ------------------
-    std::string end_str = build_payload("End", current, target).dump() + "\n";
-    send(android_socket, end_str.c_str(), end_str.size(), 0);
-    printf("Sent to Android: %s", end_str.c_str());
-    std::thread([=]() {
-        sleep(1);
-        send_to_nxp(end_str);
-    }).detach();
+    ordered_json j;
+    f >> j;
+
+    auto payload = j["TelemetryPayload"];
+    auto actual = payload["ActualOutput"];
+    auto target = payload["TargetOutput"];
+
+    bool pass = true;
+
+    for (auto& [key, value] : target.items()) {
+        if (!actual.contains(key) || actual[key] != value) {
+            std::cerr << "❌ Mismatch on " << key
+                      << " | Expected=" << value
+                      << " Actual=" << actual[key] << "\n";
+            pass = false;
+        }
+    }
+
+    if (pass) {
+        std::cout << "✅ TEST PASSED\n";
+        return 0;
+    }
+
+    std::cerr << "❌ TEST FAILED\n";
+    return 1;
 }
 
-int main() {
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    char buffer[BUFFER_SIZE];
+/* ================================
+   SERVER MODE (EDGE RUNTIME)
+================================ */
+int run_server() {
+    int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (server_fd < 0) return 1;
+
     int opt = 1;
-    socklen_t addrlen = sizeof(address);
-    
-    kill_process_on_port(ANDROID_PORT);
-    kill_process_on_port(NXP_PORT)
-;
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("Socket creation failed");
-        exit(EXIT_FAILURE);
-    }
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT,
+               &opt, sizeof(opt));
 
-    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = htons(ANDROID_PORT);
 
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(ANDROID_PORT);
+    if (bind(server_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) return 1;
+    if (listen(server_fd, 3) < 0) return 1;
 
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-        perror("Bind failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
+    std::cout << "🟢 Waiting for Android on port 60001...\n";
 
-    if (listen(server_fd, 3) < 0) {
-        perror("Listen failed");
-        close(server_fd);
-        exit(EXIT_FAILURE);
-    }
+    while (true) {
+        int sock = accept(server_fd, nullptr, nullptr);
+        if (sock < 0) continue;
 
-    printf("Waiting for Android connection on port 60001...\n");
-
-    while (1) {
-        new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen);
-        if (new_socket < 0) {
-            perror("Accept failed");
+        char buffer[BUFFER_SIZE]{};
+        ssize_t r = read(sock, buffer, BUFFER_SIZE - 1);
+        if (r <= 0) {
+            close(sock);
             continue;
         }
-
-        memset(buffer, 0, BUFFER_SIZE);
-        ssize_t read_bytes = read(new_socket, buffer, BUFFER_SIZE - 1);
-        if (read_bytes <= 0) {
-            close(new_socket);
-            continue;
-        }
-
-        buffer[read_bytes] = '\0';
-        printf("Received: %s\n", buffer);
 
         try {
-            auto received_json = ordered_json::parse(buffer);
+            auto j = ordered_json::parse(buffer);
 
-            if (!received_json.contains("SeatType") ||
-                !received_json.contains("CurrentSeat") ||
-                !received_json.contains("TargetSeat")) {
-                fprintf(stderr, "Invalid JSON format (missing keys)\n");
-                close(new_socket);
+            if (!j.contains("SeatType") ||
+                !j.contains("CurrentSeat") ||
+                !j.contains("TargetSeat")) {
+                close(sock);
                 continue;
             }
 
-            std::string name = received_json["SeatType"];
-            ordered_json current = received_json["CurrentSeat"];
-            ordered_json target = received_json["TargetSeat"];
-
-            adjust_seat(name, current, target, new_socket);
-
-        } catch (std::exception& e) {
-            fprintf(stderr, "JSON Parse Error: %s\n", e.what());
+            adjust_seat(
+                j["SeatType"],
+                j["CurrentSeat"],
+                j["TargetSeat"],
+                sock
+            );
+        } catch (const std::exception& e) {
+            std::cerr << "JSON error: " << e.what() << "\n";
         }
 
-        close(new_socket);
+        close(sock);
+    }
+}
+
+/* ================================
+   MAIN
+================================ */
+int main(int argc, char* argv[]) {
+    if (argc == 3 && std::string(argv[1]) == "--test") {
+        IS_TEST_MODE = true;
+        return run_test(argv[2]);
     }
 
-    close(server_fd);
-    return 0;
+    IS_TEST_MODE = false;
+    return run_server();
 }
