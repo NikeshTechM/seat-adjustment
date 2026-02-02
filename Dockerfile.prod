@@ -1,3 +1,7 @@
+# ===============================
+# Production Dockerfile
+# ===============================
+
 # ---------- Builder stage ----------
 FROM alpine:latest AS builder
 
@@ -5,26 +9,26 @@ RUN apk add --no-cache g++ make curl musl-dev
 
 WORKDIR /app
 
-# Copy source
+# Copy application source
 COPY seat_adjustment.cpp .
 
-# Fetch nlohmann json (header-only)
+# Fetch nlohmann json (header-only dependency)
 RUN mkdir -p nlohmann && \
     curl -L -o nlohmann/json.hpp \
     https://github.com/nlohmann/json/releases/latest/download/json.hpp
 
-# Build static binary
+# Build fully static binary
 RUN g++ -static -std=c++17 -O2 -pthread -I. \
     -o seat_adjustment seat_adjustment.cpp
 
 # ---------- Runtime stage ----------
 FROM scratch
 
-# Copy only the binary
+# Copy only the compiled binary
 COPY --from=builder /app/seat_adjustment /seat_adjustment
 
-# Expose port if Android connects to it
+# Port used by Android client
 EXPOSE 60001
 
-# Production entrypoint (NO test flags)
+# Production entrypoint (no test flags)
 ENTRYPOINT ["/seat_adjustment"]
