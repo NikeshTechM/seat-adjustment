@@ -1,0 +1,7 @@
+{
+  "TelemetryPayload": {
+    "Input": { "Back": 100, "HPos": 2, "VPos": 2, "Headrest": 2 },
+    "ActualOutput": { "Back": 120, "HPos": 1, "VPos": 3, "Headrest": 3 },
+    "TargetOutput": { "Back": 120, "HPos": 3, "VPos": 3, "Headrest": 2 }
+  }
+}
