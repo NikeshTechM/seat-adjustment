@@ -76,7 +76,7 @@ void adjust_seat(const std::string& seat,
     // ---------- PROGRESS ----------
     for (const auto& key : order) {
         if (!current.contains(key) || !target.contains(key)) continue;
-        if (key == "Headrest") continue;  // same as your original logic
+        //if (key == "Headrest") continue;
 
         while (current[key] != target[key]) {
             current[key] = current[key].get<int>() +
