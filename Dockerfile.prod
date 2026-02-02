@@ -1,18 +1,30 @@
+# ---------- Builder stage ----------
 FROM alpine:latest AS builder
 
 RUN apk add --no-cache g++ make curl musl-dev
 
 WORKDIR /app
+
+# Copy source
 COPY seat_adjustment.cpp .
 
+# Fetch nlohmann json (header-only)
 RUN mkdir -p nlohmann && \
-    curl -L -o nlohmann/json.hpp https://github.com/nlohmann/json/releases/latest/download/json.hpp
+    curl -L -o nlohmann/json.hpp \
+    https://github.com/nlohmann/json/releases/latest/download/json.hpp
 
+# Build static binary
 RUN g++ -static -std=c++17 -O2 -pthread -I. \
     -o seat_adjustment seat_adjustment.cpp
 
+# ---------- Runtime stage ----------
 FROM scratch
+
+# Copy only the binary
 COPY --from=builder /app/seat_adjustment /seat_adjustment
 
-EXPOSE 60001 44821
+# Expose port if Android connects to it
+EXPOSE 60001
+
+# Production entrypoint (NO test flags)
 ENTRYPOINT ["/seat_adjustment"]
