@@ -1,0 +1,19 @@
+FROM alpine:latest AS builder
+
+RUN apk add --no-cache g++ make curl musl-dev
+
+WORKDIR /app
+COPY seat_adjustment.cpp .
+COPY test.json .
+
+RUN mkdir -p nlohmann && \
+    curl -L -o nlohmann/json.hpp https://github.com/nlohmann/json/releases/latest/download/json.hpp
+
+RUN g++ -static -std=c++17 -O2 -pthread -I. \
+    -o seat_adjustment seat_adjustment.cpp
+
+FROM scratch
+COPY --from=builder /app/seat_adjustment /seat_adjustment
+COPY --from=builder /app/test.json /test.json
+
+ENTRYPOINT ["/seat_adjustment", "--test", "/test.json"]
