@@ -5,6 +5,7 @@ env:
     IMAGE_REPO_NAME: "sdv-devops-engine/seat-adjustment"
     AWS_DEFAULT_REGION: "us-east-1"
     DDB_TABLE: "sdvDevopsPipelineDashboardDDTable"
+    PIPELINE_EXECUTION_ID: "#{codepipeline.PipelineExecutionId}"
 
   secrets-manager:
     DOCKERHUB_USERNAME: dockerhub-credentials:username
@@ -22,7 +23,7 @@ phases:
           ./aws/install --update
         )
       - echo "Checking Podman..."
-      - podman --version || yum install -y podman
+      - podman --version || (amazon-linux-extras enable epel -y && yum install -y podman)
 
   pre_build:
     commands:
@@ -63,7 +64,8 @@ phases:
   post_build:
     commands:
       - echo "Running tests..."
-      - echo "Testing Completed"
+      - podman build -f Dockerfile.test -t test-image:${BUILD_TIMESTAMP} .
+      - podman run --rm test-image:${BUILD_TIMESTAMP} /bin/sh -c "make test || exit 1"
 
       # 🔹 TEST STAGE UPDATE
       - |
@@ -84,6 +86,8 @@ phases:
 
       - echo "Pushing image to ECR..."
       - podman push ${FULL_IMAGE_URI}
+      - echo "Pushing image to DockerHub..."
+      - podman push docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
 
       # 🔹 PUSH STAGE + FINAL STATUS UPDATE
       - |
@@ -96,9 +100,7 @@ phases:
               PushToQuayStageTimestamp = :ts,
               #status = :finalstatus
           " \
-          --expression-attribute-names '{
-            "#status": "Status"
-          }' \
+          --expression-attribute-names '{"#status": "Status"}' \
           --expression-attribute-values '{
             ":pushmsg": { "S": "Push Completed" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
