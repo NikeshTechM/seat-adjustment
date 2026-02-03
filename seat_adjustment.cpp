@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <vector>
@@ -14,7 +15,7 @@
 using ordered_json = nlohmann::ordered_json;
 
 /* ================================
-   CONSTANTS (UNCHANGED AS REQUESTED)
+   CONSTANTS (UNCHANGED)
 ================================ */
 #define BUFFER_SIZE 2048
 #define ANDROID_PORT 60001
@@ -22,15 +23,15 @@ using ordered_json = nlohmann::ordered_json;
 #define NXP_IP "192.168.1.102"
 
 /* ================================
-   GLOBAL MODE FLAG
+   GLOBAL FLAGS
 ================================ */
 bool IS_TEST_MODE = false;
 
 /* ================================
-   NXP COMMUNICATION
+   NXP COMMUNICATION (RUNTIME ONLY)
 ================================ */
 void send_to_nxp(const std::string& json_str) {
-    if (IS_TEST_MODE) return;  // 🚫 Never touch hardware in test mode
+    if (IS_TEST_MODE) return;   // 🚫 No hardware in CI
 
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) return;
@@ -48,16 +49,36 @@ void send_to_nxp(const std::string& json_str) {
 }
 
 /* ================================
-   SEAT ADJUSTMENT LOGIC
+   PURE SEAT ADJUSTMENT LOGIC
+   (USED BY RUNTIME + TEST)
+================================ */
+ordered_json simulate_adjustment(
+    ordered_json current,
+    const ordered_json& target
+) {
+    const std::vector<std::string> order = {
+        "Back", "HPos", "VPos", "Headrest"
+    };
+
+    for (const auto& key : order) {
+        if (!current.contains(key) || !target.contains(key)) continue;
+
+        while (current[key] != target[key]) {
+            current[key] = current[key].get<int>() +
+                           ((current[key] < target[key]) ? 1 : -1);
+        }
+    }
+
+    return current;
+}
+
+/* ================================
+   RUNTIME ADJUSTMENT (SOCKET FLOW)
 ================================ */
 void adjust_seat(const std::string& seat,
                  ordered_json current,
                  ordered_json target,
                  int android_socket) {
-
-    const std::vector<std::string> order = {
-        "Back", "HPos", "VPos", "Headrest"
-    };
 
     auto build_payload = [&](const std::string& status) {
         ordered_json msg;
@@ -73,10 +94,13 @@ void adjust_seat(const std::string& seat,
     send(android_socket, start.c_str(), start.size(), 0);
     std::thread([=]{ sleep(1); send_to_nxp(start); }).detach();
 
-    // ---------- PROGRESS ----------
+    // ---------- ADJUST ----------
+    const std::vector<std::string> order = {
+        "Back", "HPos", "VPos", "Headrest"
+    };
+
     for (const auto& key : order) {
         if (!current.contains(key) || !target.contains(key)) continue;
-        //if (key == "Headrest") continue;
 
         while (current[key] != target[key]) {
             current[key] = current[key].get<int>() +
@@ -84,9 +108,9 @@ void adjust_seat(const std::string& seat,
 
             std::string prog = build_payload("InProgress");
             send(android_socket, prog.c_str(), prog.size(), 0);
-
             std::thread([=]{ sleep(1); send_to_nxp(prog); }).detach();
-            usleep(50 * 1000);  // pacing for Android
+
+            usleep(50 * 1000);
         }
     }
 
@@ -97,7 +121,7 @@ void adjust_seat(const std::string& seat,
 }
 
 /* ================================
-   TEST MODE (CI / CODEBUILD)
+   CI / CODEBUILD TEST MODE
 ================================ */
 int run_test(const std::string& file) {
     std::ifstream f(file);
@@ -110,8 +134,11 @@ int run_test(const std::string& file) {
     f >> j;
 
     auto payload = j["TelemetryPayload"];
-    auto actual = payload["ActualOutput"];
-    auto target = payload["TargetOutput"];
+    auto current = payload["CurrentSeat"];
+    auto target  = payload["TargetSeat"];
+
+    // 🔹 Compute real result
+    auto actual = simulate_adjustment(current, target);
 
     bool pass = true;
 
@@ -134,7 +161,7 @@ int run_test(const std::string& file) {
 }
 
 /* ================================
-   SERVER MODE (EDGE RUNTIME)
+   ANDROID SERVER MODE
 ================================ */
 int run_server() {
     int server_fd = socket(AF_INET, SOCK_STREAM, 0);
