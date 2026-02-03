@@ -22,33 +22,38 @@ phases:
           unzip -q awscliv2.zip &&
           ./aws/install --update
         )
-      - echo "Checking Podman..."
-      - podman --version || (amazon-linux-extras enable epel -y && yum install -y podman)
+
+      - echo "Installing Podman..."
+      - yum install -y podman
 
   pre_build:
     commands:
       - echo "Login to DockerHub"
-      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
+      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
 
       - echo "Login to ECR"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin $ECR_REGISTRY
+      - aws ecr get-login-password --region "$AWS_DEFAULT_REGION" | podman login --username AWS --password-stdin "$ECR_REGISTRY"
 
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
-      - IMAGE_TAG="${BUILD_TIMESTAMP}"
+      - IMAGE_TAG="$BUILD_TIMESTAMP"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
+      - DOCKERHUB_IMAGE_URI="docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
   build:
     commands:
-      - echo "Building container..."
-      - podman build -t ${FULL_IMAGE_URI} -f Dockerfile .
+      - echo "Listing build context"
+      - ls -la
+
+      - echo "Building PROD image..."
+      - podman build -f Dockerfile.prod -t "$FULL_IMAGE_URI" .
 
       # 🔹 BUILD STAGE UPDATE
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
+          --table-name "$DDB_TABLE" \
+          --key '{ "ddid": { "S": "'"$PIPELINE_EXECUTION_ID"'" } }' \
           --update-expression "
             SET
               BuildContainerStage = :msg,
@@ -56,22 +61,24 @@ phases:
               BuildContainerStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Successfully built new image: '"${FULL_IMAGE_URI}"'" },
+            ":msg": { "S": "Successfully built image '"$FULL_IMAGE_URI"'" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
   post_build:
     commands:
-      - echo "Running tests..."
-      - podman build -f Dockerfile.test -t test-image:${BUILD_TIMESTAMP} .
-      - podman run --rm test-image:${BUILD_TIMESTAMP} /bin/sh -c "make test || exit 1"
+      - echo "Building TEST image..."
+      - podman build -f Dockerfile.test -t test-image:"$IMAGE_TAG" .
+
+      - echo "Running tests (30s timeout)..."
+      - timeout 30 podman run --rm test-image:"$IMAGE_TAG"
 
       # 🔹 TEST STAGE UPDATE
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
+          --table-name "$DDB_TABLE" \
+          --key '{ "ddid": { "S": "'"$PIPELINE_EXECUTION_ID"'" } }' \
           --update-expression "
             SET
               TestAndValidateStage = :msg,
@@ -84,31 +91,33 @@ phases:
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
-      - echo "Pushing image to ECR..."
-      - podman push ${FULL_IMAGE_URI}
-      - echo "Pushing image to DockerHub..."
-      - podman push docker.io/${DOCKERHUB_USERNAME}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
+      - echo "Tagging image for DockerHub..."
+      - podman tag "$FULL_IMAGE_URI" "$DOCKERHUB_IMAGE_URI"
 
-      # 🔹 PUSH STAGE + FINAL STATUS UPDATE
+      - echo "Pushing image to ECR..."
+      - podman push "$FULL_IMAGE_URI"
+
+      - echo "Pushing image to DockerHub..."
+      - podman push "$DOCKERHUB_IMAGE_URI"
+
+      # 🔹 PUSH STAGE UPDATE
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
+          --table-name "$DDB_TABLE" \
+          --key '{ "ddid": { "S": "'"$PIPELINE_EXECUTION_ID"'" } }' \
           --update-expression "
             SET
               PushToQuayStage = :pushmsg,
-              PushToQuayStageTimestamp = :ts,
-              #status = :finalstatus
+              PushToQuayStageTimestamp = :ts
           " \
-          --expression-attribute-names '{"#status": "Status"}' \
           --expression-attribute-values '{
             ":pushmsg": { "S": "Push Completed" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":finalstatus": { "S": "Old" }
+            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
 artifacts:
   files:
-    - Dockerfile
+    - Dockerfile.prod
+    - Dockerfile.test
   name: build-artifacts-${CODEBUILD_BUILD_ID}
   discard-paths: yes
