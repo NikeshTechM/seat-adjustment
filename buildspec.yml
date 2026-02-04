@@ -66,7 +66,10 @@ phases:
   build:
     commands:
       - echo "Building container..."
-      - podman build -t ${FULL_IMAGE_URI} .
+
+      # 🔹 FORCE UNIQUE SHA using buildtime arg
+      - BUILD_ARG="buildtime=$(date -u +%s)"
+      - podman build --build-arg BUILD_ARG=${BUILD_ARG} -t ${FULL_IMAGE_URI} .
 
       # 🔹 BUILD STAGE UPDATE (Status stays Old)
       - |
