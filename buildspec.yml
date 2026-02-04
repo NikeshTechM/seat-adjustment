@@ -38,7 +38,10 @@ phases:
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
-      # 🔹 FETCH REPO STAGE UPDATE (NEW)
+      # 🔹 COMMIT ID (AppVersion)
+      - COMMIT_ID=$(git rev-parse HEAD)
+
+      # 🔹 FETCH REPO STAGE UPDATE (with AppVersion)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -47,12 +50,14 @@ phases:
             SET
               FetchRepoStage = :msg,
               FetchRepoStageStatus = :status,
-              FetchRepoStageTimestamp = :ts
+              FetchRepoStageTimestamp = :ts,
+              AppVersion = :version
           " \
           --expression-attribute-values '{
             ":msg": { "S": "Fetch Repo successful" },
             ":status": { "S": "Yes" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
+            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
+            ":version": { "S": "'"${COMMIT_ID}"'" }
           }'
 
   build:
@@ -79,6 +84,24 @@ phases:
 
   post_build:
     commands:
+      # 🔹 FAILURE HANDLER (PushFailed)
+      - |
+        trap '
+          aws dynamodb update-item \
+            --table-name ${DDB_TABLE} \
+            --key "{ \"ddid\": { \"S\": \"${PIPELINE_EXECUTION_ID}\" } }" \
+            --update-expression "
+              SET
+                UpdateRepoStatus = :fail,
+                #status = :old
+            " \
+            --expression-attribute-names "{\"#status\":\"Status\"}" \
+            --expression-attribute-values "{
+              \":fail\": {\"S\":\"PushFailed\"},
+              \":old\": {\"S\":\"Old\"}
+            }"
+        ' ERR
+
       - echo "Running tests..."
       - echo "Testing Completed"
 
@@ -102,7 +125,7 @@ phases:
       - echo "Pushing image to ECR..."
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH STAGE + FINAL STATUS UPDATE
+      # 🔹 PUSH STAGE + FINAL STATUS UPDATE (SUCCESS)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -111,6 +134,7 @@ phases:
             SET
               PushToQuayStage = :pushmsg,
               PushToQuayStageTimestamp = :ts,
+              UpdateRepoStatus = :updatestatus,
               #status = :finalstatus
           " \
           --expression-attribute-names '{
@@ -119,7 +143,8 @@ phases:
           --expression-attribute-values '{
             ":pushmsg": { "S": "Push Completed" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":finalstatus": { "S": "Success" }
+            ":updatestatus": { "S": "PushSuccess" },
+            ":finalstatus": { "S": "Old" }
           }'
 
 artifacts:
