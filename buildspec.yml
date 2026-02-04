@@ -5,8 +5,8 @@ env:
     IMAGE_REPO_NAME: "sdv-devops-engine/seat-adjustment"
     AWS_DEFAULT_REGION: "us-east-1"
     DDB_TABLE: "sdvDevopsPipelineDashboardDDTable"
-    GITHUB_URL: "https://github.com/NikeshTechM/seat-adjustment"
     REPO_NAME: "seat-adjustment"
+    GITHUB_URL: "https://github.com/NikeshTechM/seat-adjustment"
 
   secrets-manager:
     DOCKERHUB_USERNAME: dockerhub-credentials:username
@@ -17,13 +17,7 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
-      - echo "Checking AWS CLI..."
-      - aws --version || (
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip &&
-          unzip -q awscliv2.zip &&
-          ./aws/install --update
-        )
-      - echo "Checking Podman..."
+      - aws --version
       - podman --version || yum install -y podman
 
   pre_build:
@@ -40,41 +34,40 @@ phases:
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
-      # ✅ Correct commit id (NO git dependency)
+      # ✅ Commit ID from CodePipeline
       - COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
 
-      # 🔹 FETCH REPO STAGE UPDATE
+      # 🔹 FETCH REPO STAGE (same logic as Lambda)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
           --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
           --update-expression "
             SET
+              AppVersion = :app,
               FetchRepoStage = :msg,
               FetchRepoStageStatus = :status,
               FetchRepoStageTimestamp = :ts,
-              GithubUrl = :giturl,
-              RepoName = :reponame,
-              AppVersion = :appver,
+              RepoName = :repo,
+              GithubUrl = :url,
               #status = :old
           " \
-          --expression-attribute-names '{ "#status": "Status" }' \
+          --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
+            ":app": { "S": "'"${COMMIT_ID}"'" },
             ":msg": { "S": "Fetch Repo successful" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":giturl": { "S": "'"${GITHUB_URL}"'" },
-            ":reponame": { "S": "'"${REPO_NAME}"'" },
-            ":appver": { "S": "'"${COMMIT_ID}"'" },
+            ":repo": { "S": "'"${REPO_NAME}"'" },
+            ":url": { "S": "'"${GITHUB_URL}"'" },
             ":old": { "S": "Old" }
           }'
 
   build:
     commands:
       - echo "Building container..."
-      - podman build -t ${FULL_IMAGE_URI} -f Dockerfile .
+      - podman build -t ${FULL_IMAGE_URI} .
 
-      # 🔹 BUILD STAGE UPDATE
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -86,7 +79,7 @@ phases:
               BuildContainerStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Successfully built image: '"${FULL_IMAGE_URI}"'" },
+            ":msg": { "S": "Container build successful" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
@@ -112,9 +105,8 @@ phases:
         ' ERR
 
       - echo "Running tests..."
-      - echo "Testing Completed"
+      - echo "Tests passed"
 
-      # 🔹 TEST STAGE UPDATE
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -126,29 +118,29 @@ phases:
               TestAndValidateStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Testing Completed" },
+            ":msg": { "S": "Tests completed" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
-      - echo "Pushing image to ECR..."
+      - echo "Pushing image..."
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH SUCCESS UPDATE
+      # ✅ FINAL SUCCESS UPDATE
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
           --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
           --update-expression "
             SET
-              PushToQuayStage = :msg,
+              PushToQuayStage = :pushmsg,
               PushToQuayStageTimestamp = :ts,
               UpdateRepoStatus = :success,
               #status = :old
           " \
-          --expression-attribute-names '{ "#status": "Status" }' \
+          --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
-            ":msg": { "S": "Push Completed" },
+            ":pushmsg": { "S": "Push Completed" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
             ":success": { "S": "PushSuccess" },
             ":old": { "S": "Old" }
@@ -157,5 +149,4 @@ phases:
 artifacts:
   files:
     - Dockerfile
-  name: build-artifacts-${CODEBUILD_BUILD_ID}
   discard-paths: yes
