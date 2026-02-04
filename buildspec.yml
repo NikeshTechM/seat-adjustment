@@ -5,6 +5,8 @@ env:
     IMAGE_REPO_NAME: "sdv-devops-engine/seat-adjustment"
     AWS_DEFAULT_REGION: "us-east-1"
     DDB_TABLE: "sdvDevopsPipelineDashboardDDTable"
+    GITHUB_URL: "https://github.com/NikeshTechM/seat-adjustment"
+    REPO_NAME: "seat-adjustment"
 
   secrets-manager:
     DOCKERHUB_USERNAME: dockerhub-credentials:username
@@ -38,6 +40,9 @@ phases:
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
+      # ✅ Correct commit id (NO git dependency)
+      - COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
+
       # 🔹 FETCH REPO STAGE UPDATE
       - |
         aws dynamodb update-item \
@@ -47,12 +52,21 @@ phases:
             SET
               FetchRepoStage = :msg,
               FetchRepoStageStatus = :status,
-              FetchRepoStageTimestamp = :ts
+              FetchRepoStageTimestamp = :ts,
+              GithubUrl = :giturl,
+              RepoName = :reponame,
+              AppVersion = :appver,
+              #status = :old
           " \
+          --expression-attribute-names '{ "#status": "Status" }' \
           --expression-attribute-values '{
             ":msg": { "S": "Fetch Repo successful" },
             ":status": { "S": "Yes" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
+            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
+            ":giturl": { "S": "'"${GITHUB_URL}"'" },
+            ":reponame": { "S": "'"${REPO_NAME}"'" },
+            ":appver": { "S": "'"${COMMIT_ID}"'" },
+            ":old": { "S": "Old" }
           }'
 
   build:
@@ -72,14 +86,14 @@ phases:
               BuildContainerStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Successfully built new image: '"${FULL_IMAGE_URI}"'" },
+            ":msg": { "S": "Successfully built image: '"${FULL_IMAGE_URI}"'" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
   post_build:
     commands:
-      # 🔹 FAILURE HANDLER (PushFailed)
+      # 🔴 FAILURE HANDLER
       - |
         trap '
           aws dynamodb update-item \
@@ -120,26 +134,24 @@ phases:
       - echo "Pushing image to ECR..."
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH STAGE + FINAL STATUS UPDATE (SUCCESS PATH)
+      # 🔹 PUSH SUCCESS UPDATE
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
           --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
           --update-expression "
             SET
-              PushToQuayStage = :pushmsg,
+              PushToQuayStage = :msg,
               PushToQuayStageTimestamp = :ts,
-              UpdateRepoStatus = :updatestatus,
-              #status = :finalstatus
+              UpdateRepoStatus = :success,
+              #status = :old
           " \
-          --expression-attribute-names '{
-            "#status": "Status"
-          }' \
+          --expression-attribute-names '{ "#status": "Status" }' \
           --expression-attribute-values '{
-            ":pushmsg": { "S": "Push Completed" },
+            ":msg": { "S": "Push Completed" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":updatestatus": { "S": "PushSuccess" },
-            ":finalstatus": { "S": "Old" }
+            ":success": { "S": "PushSuccess" },
+            ":old": { "S": "Old" }
           }'
 
 artifacts:
