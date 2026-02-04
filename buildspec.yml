@@ -28,7 +28,7 @@ phases:
       - echo "Login to ECR"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin $ECR_REGISTRY
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin
 
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
@@ -37,7 +37,7 @@ phases:
       # ✅ Commit ID from CodePipeline
       - COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
 
-      # 🔹 FETCH REPO STAGE (same logic as Lambda)
+      # 🔹 FETCH REPO STAGE (Status = New)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -50,7 +50,7 @@ phases:
               FetchRepoStageTimestamp = :ts,
               RepoName = :repo,
               GithubUrl = :url,
-              #status = :old
+              #status = :new
           " \
           --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
@@ -60,7 +60,7 @@ phases:
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
             ":repo": { "S": "'"${REPO_NAME}"'" },
             ":url": { "S": "'"${GITHUB_URL}"'" },
-            ":old": { "S": "Old" }
+            ":new": { "S": "New" }
           }'
 
   build:
@@ -68,6 +68,7 @@ phases:
       - echo "Building container..."
       - podman build -t ${FULL_IMAGE_URI} .
 
+      # 🔹 BUILD STAGE UPDATE (Status stays Old)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -79,7 +80,7 @@ phases:
               BuildContainerStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Container build successful" },
+            ":msg": { "S": "Successfully built new image: '"${FULL_IMAGE_URI}"'" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
@@ -105,8 +106,9 @@ phases:
         ' ERR
 
       - echo "Running tests..."
-      - echo "Tests passed"
+      - echo "Tests completed"
 
+      # 🔹 TEST STAGE UPDATE (Status stays Old)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -126,21 +128,21 @@ phases:
       - echo "Pushing image..."
       - podman push ${FULL_IMAGE_URI}
 
-      # ✅ FINAL SUCCESS UPDATE
+      # 🔹 PUSH STAGE SUCCESS UPDATE (Status = Old)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
           --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
           --update-expression "
             SET
-              PushToQuayStage = :pushmsg,
+              PushToQuayStage = :msg,
               PushToQuayStageTimestamp = :ts,
               UpdateRepoStatus = :success,
               #status = :old
           " \
           --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
-            ":pushmsg": { "S": "Push Completed" },
+            ":msg": { "S": "Push Completed" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
             ":success": { "S": "PushSuccess" },
             ":old": { "S": "Old" }
