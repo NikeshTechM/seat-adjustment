@@ -120,7 +120,7 @@ phases:
               TestAndValidateStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Tests completed" },
+            ":msg": { "S": "Testing completed successfully" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
@@ -142,7 +142,7 @@ phases:
           " \
           --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
-            ":msg": { "S": "Push Completed" },
+            ":msg": { "S": "Push Completed successfully" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
             ":success": { "S": "PushSuccess" },
             ":old": { "S": "Old" }
