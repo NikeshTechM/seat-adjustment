@@ -142,7 +142,7 @@ phases:
           " \
           --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values '{
-            ":msg": { "S": "Push Completed successfully" },
+            ":msg": { "S": "Push Completed Successfully" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
             ":success": { "S": "PushSuccess" },
             ":old": { "S": "Old" }
