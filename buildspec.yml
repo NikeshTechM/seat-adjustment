@@ -30,62 +30,57 @@ phases:
       - echo "Using DDID=${DDID}"
       - echo "Login to DockerHub"
       - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
-
       - echo "Login to ECR"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
       - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin
-
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
+      - echo "Full Image URI: $FULL_IMAGE_URI"
 
   build:
     commands:
       - echo "Building container..."
-      - podman build -t ${FULL_IMAGE_URI} -f Dockerfile .
-
-      # 🔹 BUILD STAGE UPDATE
+      - podman build -t "$FULL_IMAGE_URI" -f Dockerfile .
+      - echo "Updating DynamoDB Build Stage..."
       - |
         aws dynamodb update-item \
           --table-name "$DDB_TABLE" \
           --key "{\"ddid\": {\"S\": \"$DDID\"}}" \
           --update-expression "SET BuildContainerStage = :msg, BuildContainerStageStatus = :status, BuildContainerStageTimestamp = :ts" \
           --expression-attribute-values "{\"\
-:msg\": {\"S\": \"Successfully built new image: ${FULL_IMAGE_URI}\"},\
-\":status\": {\"S\": \"Yes\"},\
-\":ts\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+:msg\":{\"S\":\"Successfully built new image: $FULL_IMAGE_URI\"},\
+\":status\":{\"S\":\"Yes\"},\
+\":ts\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
 
   post_build:
     commands:
       - echo "Running tests..."
       - echo "Testing Completed"
-
-      # 🔹 TEST STAGE UPDATE
+      - echo "Updating DynamoDB Test Stage..."
       - |
         aws dynamodb update-item \
           --table-name "$DDB_TABLE" \
           --key "{\"ddid\": {\"S\": \"$DDID\"}}" \
           --update-expression "SET TestAndValidateStage = :msg, TestAndValidateStageStatus = :status, TestAndValidateStageTimestamp = :ts" \
           --expression-attribute-values "{\"\
-:msg\": {\"S\": \"Testing Completed\"},\
-\":status\": {\"S\": \"Yes\"},\
-\":ts\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
-
+:msg\":{\"S\":\"Testing Completed\"},\
+\":status\":{\"S\":\"Yes\"},\
+\":ts\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
       - echo "Pushing image to ECR..."
-      - podman push ${FULL_IMAGE_URI}
-
-      # 🔹 PUSH STAGE + FINAL STATUS UPDATE
+      - podman push "$FULL_IMAGE_URI"
+      - echo "Updating DynamoDB Push Stage..."
       - |
         aws dynamodb update-item \
           --table-name "$DDB_TABLE" \
           --key "{\"ddid\": {\"S\": \"$DDID\"}}" \
           --update-expression "SET PushToQuayStage = :pushmsg, PushToQuayStageTimestamp = :ts, #status = :finalstatus" \
-          --expression-attribute-names '{"#status": "Status"}' \
+          --expression-attribute-names '{"#status":"Status"}' \
           --expression-attribute-values "{\"\
-:pushmsg\": {\"S\": \"Push Completed\"},\
-\":ts\": {\"S\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},\
-\":finalstatus\": {\"S\": \"Old\"}}"
+:pushmsg\":{\"S\":\"Push Completed\"},\
+\":ts\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},\
+\":finalstatus\":{\"S\":\"Old\"}}"
 
 artifacts:
   files:
