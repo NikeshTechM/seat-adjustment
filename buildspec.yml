@@ -17,11 +17,7 @@ phases:
       python: 3.11
     commands:
       - echo "Checking AWS CLI..."
-      - aws --version || (
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip &&
-          unzip -q awscliv2.zip &&
-          ./aws/install --update
-        )
+      - aws --version || (curl "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o awscliv2.zip && unzip -q awscliv2.zip && ./aws/install --update)
       - echo "Checking Podman..."
       - podman --version || yum install -y podman
 
@@ -49,7 +45,7 @@ phases:
           --table-name "$DDB_TABLE" \
           --key "{\"ddid\": {\"S\": \"$DDID\"}}" \
           --update-expression "SET BuildContainerStage = :msg, BuildContainerStageStatus = :status, BuildContainerStageTimestamp = :ts" \
-          --expression-attribute-values "{\"\":msg\":{\"S\":\"Successfully built new image: $FULL_IMAGE_URI\"},\"\:status\":{\"S\":\"Yes\"},\"\:ts\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
+          --expression-attribute-values "{\"\":msg\":{\"S\":\"Successfully built new image: $FULL_IMAGE_URI\"},\":status\":{\"S\":\"Yes\"},\":ts\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}"
 
   post_build:
     commands:
