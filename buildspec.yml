@@ -38,8 +38,9 @@ phases:
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
-      # 🔹 COMMIT ID (AppVersion)
-      - COMMIT_ID=$(git rev-parse HEAD)
+      # ✅ COMMIT ID FROM CODEBUILD (FIX)
+      - COMMIT_ID=$CODEBUILD_RESOLVED_SOURCE_VERSION
+      - echo "AppVersion (Commit ID): $COMMIT_ID"
 
       # 🔹 FETCH REPO STAGE UPDATE (with AppVersion)
       - |
@@ -84,7 +85,7 @@ phases:
 
   post_build:
     commands:
-      # 🔹 FAILURE HANDLER (PushFailed)
+      # 🔹 FAILURE HANDLER
       - |
         trap '
           aws dynamodb update-item \
@@ -125,7 +126,7 @@ phases:
       - echo "Pushing image to ECR..."
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH STAGE + FINAL STATUS UPDATE (SUCCESS)
+      # 🔹 PUSH STAGE + FINAL STATUS (SUCCESS)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
