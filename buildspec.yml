@@ -17,143 +17,110 @@ phases:
     runtime-versions:
       python: 3.11
     commands:
+      - set -e
       - aws --version
       - podman --version || yum install -y podman
 
   pre_build:
     commands:
+      - set -e
       - echo "🔐 Login to DockerHub"
-      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
+      - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
 
-      - echo "🔐 Login to ECR (CORRECT WAY)"
+      - echo "🔐 Login to ECR"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin ${ECR_REGISTRY}
+      - ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+      - aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | podman login --username AWS --password-stdin ${ECR_REGISTRY}
 
-      - BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
-      - IMAGE_TAG="${BUILD_TIMESTAMP}"
-      - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
+      - BUILD_TIME=$(date -u +%s)
+      - IMAGE_TAG=${BUILD_TIME}
+      - FULL_IMAGE_URI=${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
 
-      # ✅ Commit ID from CodePipeline (SAFE + RELIABLE)
-      - COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
+      - COMMIT_ID=${CODEBUILD_RESOLVED_SOURCE_VERSION}
 
-      - echo "📌 DDID (PipelineExecutionId): ${PIPELINE_EXECUTION_ID}"
-      - echo "📌 Commit ID: ${COMMIT_ID}"
+      - echo "DDID=${PIPELINE_EXECUTION_ID}"
+      - echo "COMMIT_ID=${COMMIT_ID}"
 
-      # 🔹 FETCH REPO STAGE → Status = New
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
-          --update-expression "
-            SET
-              AppVersion = :app,
-              FetchRepoStage = :msg,
-              FetchRepoStageStatus = :status,
-              FetchRepoStageTimestamp = :ts,
-              RepoName = :repo,
-              GithubUrl = :url,
-              #status = :new
-          " \
-          --expression-attribute-names '{"#status":"Status"}' \
-          --expression-attribute-values '{
-            ":app": { "S": "'"${COMMIT_ID}"'" },
-            ":msg": { "S": "Fetch Repo successful" },
-            ":status": { "S": "Yes" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":repo": { "S": "'"${REPO_NAME}"'" },
-            ":url": { "S": "'"${GITHUB_URL}"'" },
-            ":new": { "S": "New" }
-          }'
+          --table-name "${DDB_TABLE}" \
+          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+          --update-expression "SET AppVersion=:a, FetchRepoStage=:f, FetchRepoStageStatus=:s, FetchRepoStageTimestamp=:t, RepoName=:r, GithubUrl=:g, #st=:n" \
+          --expression-attribute-names '{"#st":"Status"}' \
+          --expression-attribute-values "{
+            \":a\":{\"S\":\"${COMMIT_ID}\"},
+            \":f\":{\"S\":\"Fetch Repo successful\"},
+            \":s\":{\"S\":\"Yes\"},
+            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+            \":r\":{\"S\":\"${REPO_NAME}\"},
+            \":g\":{\"S\":\"${GITHUB_URL}\"},
+            \":n\":{\"S\":\"New\"}
+          }"
 
   build:
     commands:
-      - echo "🏗️ Building container with forced unique digest"
+      - set -e
+      - echo "🏗️ Building image"
       - |
         podman build \
-          --build-arg BUILD_TIME=$(date -u +%s) \
+          --no-cache \
+          --build-arg BUILD_TIME=${BUILD_TIME} \
           --build-arg COMMIT_ID=${COMMIT_ID} \
           -t ${FULL_IMAGE_URI} .
 
-      # 🔹 BUILD STAGE (Status unchanged)
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
-          --update-expression "
-            SET
-              BuildContainerStage = :msg,
-              BuildContainerStageStatus = :status,
-              BuildContainerStageTimestamp = :ts
-          " \
-          --expression-attribute-values '{
-            ":msg": { "S": "Container built successfully" },
-            ":status": { "S": "Yes" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
-          }'
+          --table-name "${DDB_TABLE}" \
+          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+          --update-expression "SET BuildContainerStage=:m, BuildContainerStageStatus=:s, BuildContainerStageTimestamp=:t" \
+          --expression-attribute-values "{
+            \":m\":{\"S\":\"Container built successfully\"},
+            \":s\":{\"S\":\"Yes\"},
+            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+          }"
 
   post_build:
     commands:
-      # 🔴 FAILURE HANDLER (Push/Test failure)
+      - set -e
+
       - |
         trap '
           aws dynamodb update-item \
-            --table-name ${DDB_TABLE} \
-            --key "{ \"ddid\": { \"S\": \"${PIPELINE_EXECUTION_ID}\" } }" \
-            --update-expression "
-              SET
-                UpdateRepoStatus = :fail,
-                #status = :old
-            " \
-            --expression-attribute-names "{\"#status\":\"Status\"}" \
-            --expression-attribute-values "{
-              \":fail\": {\"S\":\"PushFailed\"},
-              \":old\": {\"S\":\"Old\"}
-            }"
+            --table-name "'"${DDB_TABLE}"'" \
+            --key "{\"ddid\":{\"S\":\"'"${PIPELINE_EXECUTION_ID}"'\"}}" \
+            --update-expression "SET UpdateRepoStatus=:f, #st=:o" \
+            --expression-attribute-names "{\"#st\":\"Status\"}" \
+            --expression-attribute-values "{\"\\\":f\\\":{\\\"S\\\":\\\"PushFailed\\\"},\\\":o\\\":{\\\"S\\\":\\\"Old\\\"}}"
         ' ERR
 
-      - echo "🧪 Running tests"
-      - echo "Tests completed"
+      - echo "🧪 Tests completed"
 
-      # 🔹 TEST STAGE
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
-          --update-expression "
-            SET
-              TestAndValidateStage = :msg,
-              TestAndValidateStageStatus = :status,
-              TestAndValidateStageTimestamp = :ts
-          " \
-          --expression-attribute-values '{
-            ":msg": { "S": "Testing completed successfully" },
-            ":status": { "S": "Yes" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
-          }'
+          --table-name "${DDB_TABLE}" \
+          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+          --update-expression "SET TestAndValidateStage=:m, TestAndValidateStageStatus=:s, TestAndValidateStageTimestamp=:t" \
+          --expression-attribute-values "{
+            \":m\":{\"S\":\"Testing completed successfully\"},
+            \":s\":{\"S\":\"Yes\"},
+            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+          }"
 
-      - echo "📤 Pushing image to ECR"
+      - echo "📤 Pushing image"
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH SUCCESS → Status = Old
       - |
         aws dynamodb update-item \
-          --table-name ${DDB_TABLE} \
-          --key '{ "ddid": { "S": "'"${PIPELINE_EXECUTION_ID}"'" } }' \
-          --update-expression "
-            SET
-              PushToQuayStage = :msg,
-              PushToQuayStageTimestamp = :ts,
-              UpdateRepoStatus = :success,
-              #status = :old
-          " \
-          --expression-attribute-names '{"#status":"Status"}' \
-          --expression-attribute-values '{
-            ":msg": { "S": "Push Completed Successfully" },
-            ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" },
-            ":success": { "S": "PushSuccess" },
-            ":old": { "S": "Old" }
-          }'
+          --table-name "${DDB_TABLE}" \
+          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+          --update-expression "SET PushToQuayStage=:p, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
+          --expression-attribute-names '{"#st":"Status"}' \
+          --expression-attribute-values "{
+            \":p\":{\"S\":\"Push Completed Successfully\"},
+            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+            \":u\":{\"S\":\"PushSuccess\"},
+            \":o\":{\"S\":\"Old\"}
+          }"
 
 artifacts:
   files:
