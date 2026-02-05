@@ -34,7 +34,7 @@ phases:
       - aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | podman login --username AWS --password-stdin ${ECR_REGISTRY}
 
       # ✅ FIXED TAG (HUMAN READABLE)
-      - export IMAGE_TAG=$(date -u +%Y%m%d-%H%M%S)
+      - export IMAGE_TAG=$(date +%Y%m%d-%H%M%S)
       - export FULL_IMAGE_URI=${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
 
       - export COMMIT_ID=${CODEBUILD_RESOLVED_SOURCE_VERSION}
