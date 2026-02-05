@@ -78,7 +78,7 @@ phases:
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
           --update-expression "SET BuildContainerStage=:m, BuildContainerStageStatus=:s, BuildContainerStageTimestamp=:t" \
           --expression-attribute-values "{
-            \":m\":{\"S\":\"Container built successfully\"},
+            \":m\":{\"S\":\"Successfully built new image: '"${FULL_IMAGE_URI}"'\"},
             \":s\":{\"S\":\"Yes\"},
             \":t\":{\"S\":\"${CURRENT_TIME}\"}
           }"
