@@ -81,50 +81,36 @@ phases:
           }"
 
   post_build:
-    commands:
-      - set -e
+  commands:
+    - set -e
 
-      # 🔴 FAILURE HANDLER
-      - |
-        trap '
-          aws dynamodb update-item \
-            --table-name "'"${DDB_TABLE}"'" \
-            --key "{\"ddid\":{\"S\":\"'"${PIPELINE_EXECUTION_ID}"'\"}}" \
-            --update-expression "SET UpdateRepoStatus=:f, #st=:o" \
-            --expression-attribute-names "{\"#st\":\"Status\"}" \
-            --expression-attribute-values "{\"\\\":f\\\":{\\\"S\\\":\\\"PushFailed\\\"},\\\":o\\\":{\\\"S\\\":\\\"Old\\\"}}"
-        ' ERR
+    - echo "🧪 Running tests"
+    - |
+      aws dynamodb update-item \
+        --table-name "${DDB_TABLE}" \
+        --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+        --update-expression "SET TestAndValidateStage=:m, TestAndValidateStageStatus=:s, TestAndValidateStageTimestamp=:t" \
+        --expression-attribute-values "{
+          \":m\":{\"S\":\"Testing completed successfully\"},
+          \":s\":{\"S\":\"Yes\"},
+          \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+        }"
 
-      - echo "🧪 Running tests"
-      - |
-        aws dynamodb update-item \
-          --table-name "${DDB_TABLE}" \
-          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
-          --update-expression "SET TestAndValidateStage=:m, TestAndValidateStageStatus=:s, TestAndValidateStageTimestamp=:t" \
-          --expression-attribute-values "{
-            \":m\":{\"S\":\"Testing completed successfully\"},
-            \":s\":{\"S\":\"Yes\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
-          }"
+    - echo "📤 Pushing image"
+    - podman push ${FULL_IMAGE_URI}
 
-      - echo "📤 Pushing image"
-      - podman push ${FULL_IMAGE_URI}
-
-      # 🔹 PUSH SUCCESS → Status = Old
-      - |
-        aws dynamodb update-item \
-          --table-name "${DDB_TABLE}" \
-          --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
-          --condition-expression "UpdateRepoStatus = :inprogress" \
-          --update-expression "SET PushToQuayStage=:p, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
-          --expression-attribute-names '{"#st":"Status"}' \
-          --expression-attribute-values "{
-            \":p\":{\"S\":\"Push Completed Successfully\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
-            \":u\":{\"S\":\"Completed\"},
-            \":o\":{\"S\":\"Old\"},
-            \":inprogress\":{\"S\":\"PushInProgress\"}
-          }"
+    - |
+      aws dynamodb update-item \
+        --table-name "${DDB_TABLE}" \
+        --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+        --update-expression "SET PushToQuayStage=:p, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
+        --expression-attribute-names '{"#st":"Status"}' \
+        --expression-attribute-values "{
+          \":p\":{\"S\":\"Push Completed Successfully\"},
+          \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+          \":u\":{\"S\":\"Completed\"},
+          \":o\":{\"S\":\"Old\"}
+        }"
 
 artifacts:
   files:
