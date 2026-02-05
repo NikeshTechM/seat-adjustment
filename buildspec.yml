@@ -24,23 +24,26 @@ phases:
   pre_build:
     commands:
       - set -e
+
       - echo "🔐 Login to DockerHub"
       - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
 
       - echo "🔐 Login to ECR"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-      - ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+      - export ECR_REGISTRY=${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
       - aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | podman login --username AWS --password-stdin ${ECR_REGISTRY}
 
-      - BUILD_TIME=$(date -u +%s)
-      - IMAGE_TAG=${BUILD_TIME}
-      - FULL_IMAGE_URI=${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
+      # ✅ FIXED TAG (HUMAN READABLE)
+      - export IMAGE_TAG=$(date -u +%Y%m%d-%H%M%S)
+      - export FULL_IMAGE_URI=${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
 
-      - COMMIT_ID=${CODEBUILD_RESOLVED_SOURCE_VERSION}
+      - export COMMIT_ID=${CODEBUILD_RESOLVED_SOURCE_VERSION}
 
       - echo "DDID=${PIPELINE_EXECUTION_ID}"
       - echo "COMMIT_ID=${COMMIT_ID}"
+      - echo "IMAGE_TAG=${IMAGE_TAG}"
 
+      # 🔹 FETCH STAGE → Status = New
       - |
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
@@ -61,12 +64,7 @@ phases:
     commands:
       - set -e
       - echo "🏗️ Building image"
-      - |
-        podman build \
-          --no-cache \
-          --build-arg BUILD_TIME=${BUILD_TIME} \
-          --build-arg COMMIT_ID=${COMMIT_ID} \
-          -t ${FULL_IMAGE_URI} .
+      - podman build --no-cache -t ${FULL_IMAGE_URI} .
 
       - |
         aws dynamodb update-item \
@@ -83,6 +81,7 @@ phases:
     commands:
       - set -e
 
+      # 🔴 Enable failure handler ONLY for push
       - |
         trap '
           aws dynamodb update-item \
@@ -109,6 +108,10 @@ phases:
       - echo "📤 Pushing image"
       - podman push ${FULL_IMAGE_URI}
 
+      # ✅ DISABLE TRAP AFTER SUCCESS
+      - trap - ERR
+
+      # 🔹 PUSH SUCCESS → Status = Old
       - |
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
