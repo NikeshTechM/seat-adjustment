@@ -22,22 +22,25 @@ phases:
 
   pre_build:
     commands:
-      - echo "Login to DockerHub"
+      - echo "🔐 Login to DockerHub"
       - echo "$DOCKERHUB_PASSWORD" | podman login docker.io --username $DOCKERHUB_USERNAME --password-stdin
 
-      - echo "Login to ECR"
+      - echo "🔐 Login to ECR (CORRECT WAY)"
       - AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
       - ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
-      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | podman login --username AWS --password-stdin ${ECR_REGISTRY}
 
       - BUILD_TIMESTAMP=$(date -u +"%Y%m%d%H%M%S")
       - IMAGE_TAG="${BUILD_TIMESTAMP}"
       - FULL_IMAGE_URI="${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
 
-      # ✅ Commit ID from CodePipeline
+      # ✅ Commit ID from CodePipeline (SAFE + RELIABLE)
       - COMMIT_ID="${CODEBUILD_RESOLVED_SOURCE_VERSION}"
 
-      # 🔹 FETCH REPO STAGE (Status = New)
+      - echo "📌 DDID (PipelineExecutionId): ${PIPELINE_EXECUTION_ID}"
+      - echo "📌 Commit ID: ${COMMIT_ID}"
+
+      # 🔹 FETCH REPO STAGE → Status = New
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -65,13 +68,14 @@ phases:
 
   build:
     commands:
-      - echo "Building container..."
+      - echo "🏗️ Building container with forced unique digest"
+      - |
+        podman build \
+          --build-arg BUILD_TIME=$(date -u +%s) \
+          --build-arg COMMIT_ID=${COMMIT_ID} \
+          -t ${FULL_IMAGE_URI} .
 
-      # 🔹 FORCE UNIQUE SHA using buildtime arg
-      - BUILD_ARG="buildtime=$(date -u +%s)"
-      - podman build --build-arg BUILD_ARG=${BUILD_ARG} -t ${FULL_IMAGE_URI} .
-
-      # 🔹 BUILD STAGE UPDATE (Status stays Old)
+      # 🔹 BUILD STAGE (Status unchanged)
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -83,14 +87,14 @@ phases:
               BuildContainerStageTimestamp = :ts
           " \
           --expression-attribute-values '{
-            ":msg": { "S": "Successfully built new image: '"${FULL_IMAGE_URI}"'" },
+            ":msg": { "S": "Container built successfully" },
             ":status": { "S": "Yes" },
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
   post_build:
     commands:
-      # 🔴 FAILURE HANDLER
+      # 🔴 FAILURE HANDLER (Push/Test failure)
       - |
         trap '
           aws dynamodb update-item \
@@ -108,10 +112,10 @@ phases:
             }"
         ' ERR
 
-      - echo "Running tests..."
+      - echo "🧪 Running tests"
       - echo "Tests completed"
 
-      # 🔹 TEST STAGE UPDATE (Status stays Old)
+      # 🔹 TEST STAGE
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
@@ -128,10 +132,10 @@ phases:
             ":ts": { "S": "'"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"'" }
           }'
 
-      - echo "Pushing image..."
+      - echo "📤 Pushing image to ECR"
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH STAGE SUCCESS UPDATE (Status = Old)
+      # 🔹 PUSH SUCCESS → Status = Old
       - |
         aws dynamodb update-item \
           --table-name ${DDB_TABLE} \
