@@ -37,6 +37,7 @@ phases:
       - FULL_IMAGE_URI=${ECR_REGISTRY}/${IMAGE_REPO_NAME}:${IMAGE_TAG}
 
       - COMMIT_ID=${CODEBUILD_RESOLVED_SOURCE_VERSION}
+      - CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
       - echo "DDID=${PIPELINE_EXECUTION_ID}"
       - echo "COMMIT_ID=${COMMIT_ID}"
@@ -52,7 +53,7 @@ phases:
             \":a\":{\"S\":\"${COMMIT_ID}\"},
             \":f\":{\"S\":\"Fetch Repo successful\"},
             \":s\":{\"S\":\"Yes\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+            \":t\":{\"S\":\"${CURRENT_TIME}\"},
             \":r\":{\"S\":\"${REPO_NAME}\"},
             \":g\":{\"S\":\"${GITHUB_URL}\"},
             \":n\":{\"S\":\"New\"}
@@ -71,6 +72,7 @@ phases:
 
       # 🔹 Update Build Stage in DynamoDB
       - |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
@@ -78,7 +80,7 @@ phases:
           --expression-attribute-values "{
             \":m\":{\"S\":\"Container built successfully\"},
             \":s\":{\"S\":\"Yes\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+            \":t\":{\"S\":\"${CURRENT_TIME}\"}
           }"
 
   post_build:
@@ -88,6 +90,7 @@ phases:
       # 🔴 FAILURE HANDLER
       - |
         trap '
+          CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           aws dynamodb update-item \
             --table-name "'"${DDB_TABLE}"'" \
             --key "{\"ddid\":{\"S\":\"'"${PIPELINE_EXECUTION_ID}"'\"}}" \
@@ -98,6 +101,7 @@ phases:
 
       - echo "🧪 Running tests"
       - |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
@@ -105,22 +109,24 @@ phases:
           --expression-attribute-values "{
             \":m\":{\"S\":\"Testing completed successfully\"},
             \":s\":{\"S\":\"Yes\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
+            \":t\":{\"S\":\"${CURRENT_TIME}\"}
           }"
 
       - echo "📤 Pushing image"
       - podman push ${FULL_IMAGE_URI}
 
-      # 🔹 PUSH SUCCESS → Always update to "Push Completed Successfully"
+      # 🔹 PUSH SUCCESS → Update all push-related fields
       - |
+        CURRENT_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
-          --update-expression "SET PushToQuayStage=:p, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
+          --update-expression "SET PushToQuayStage=:p, PushToQuayStageStatus=:ps, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
           --expression-attribute-names '{"#st":"Status"}' \
           --expression-attribute-values "{
             \":p\":{\"S\":\"Push Completed Successfully\"},
-            \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
+            \":ps\":{\"S\":\"Yes\"},
+            \":t\":{\"S\":\"${CURRENT_TIME}\"},
             \":u\":{\"S\":\"Completed\"},
             \":o\":{\"S\":\"Old\"}
           }"
