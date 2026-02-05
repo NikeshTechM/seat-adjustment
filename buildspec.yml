@@ -72,7 +72,7 @@ phases:
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
           --update-expression "SET BuildContainerStage=:m, BuildContainerStageStatus=:s, BuildContainerStageTimestamp=:t" \
           --expression-attribute-values "{
-            \":m\":{\"S\":\"Container built successfully\"},
+            \":m\":{\"S\":\"Successfully built new image: '"${FULL_IMAGE_URI}"'\"},
             \":s\":{\"S\":\"Yes\"},
             \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}
           }"
@@ -116,13 +116,15 @@ phases:
         aws dynamodb update-item \
           --table-name "${DDB_TABLE}" \
           --key "{\"ddid\":{\"S\":\"${PIPELINE_EXECUTION_ID}\"}}" \
+          --condition-expression "UpdateRepoStatus = :inprogress" \
           --update-expression "SET PushToQuayStage=:p, PushToQuayStageTimestamp=:t, UpdateRepoStatus=:u, #st=:o" \
           --expression-attribute-names '{"#st":"Status"}' \
           --expression-attribute-values "{
             \":p\":{\"S\":\"Push Completed Successfully\"},
             \":t\":{\"S\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"},
-            \":u\":{\"S\":\"PushSuccess\"},
-            \":o\":{\"S\":\"Old\"}
+            \":u\":{\"S\":\"PushCompleted\"},
+            \":o\":{\"S\":\"Old\"},
+            \":inprogress\":{\"S\":\"PushInProgress\"}
           }"
 
 artifacts:
